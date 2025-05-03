@@ -113,6 +113,8 @@ class PatchEmbedding(nn.Module):
         # Dropout layer
         self.dropout = nn.Dropout(p=dropout)
 
+    # Inside the PatchEmbedding class:
+
     def forward(self, x):
         # Check input shape
         assert (
@@ -134,6 +136,10 @@ class PatchEmbedding(nn.Module):
         x_permuted = x_flattened.permute(
             0, 2, 1
         )  # Shape: (batch_size, num_patches, embed_dim)
+
+        # ***** FIX: Ensure tensor is contiguous after permute *****
+        x_permuted = x_permuted.contiguous()
+        # **********************************************************
 
         # Expand the class token across the batch dimension
         cls_token_expanded = self.cls_token.expand(
@@ -244,6 +250,7 @@ class ViT(nn.Module):
 
         # Pass patch embeddings through Transformer Encoder blocks
         x = self.encoder_blocks(x)  # Shape: (batch_size, num_patches + 1, embed_dim)
+        x = x.contiguous()
 
         # Get the CLS token embedding (it's the first one)
         cls_token_embedding = x[:, 0, :]  # Shape: (batch_size, embed_dim)
@@ -322,15 +329,15 @@ print(f"Size of Test Set: {len(test_dataset)}")
 
 # --- Display a sample image ---
 img_display, label_display = train_dataset[0]
-print(f"Image shape: {img_display.shape}, Label: {label_display}")
-plt.figure()
-# Need to un-normalize and permute dimensions for display if normalized
-# Or display directly if ToTensor() was the last step (before normalization)
-# Since we normalized, let's display the tensor directly (will look weird but shows structure)
-# To display properly: img_display = img_display * 0.3081 + 0.1307
-plt.imshow(img_display.squeeze(), cmap="gray")
-plt.title(f"Sample Image - Label: {label_display}")
-plt.show()
+# print(f"Image shape: {img_display.shape}, Label: {label_display}")
+# plt.figure()
+# # Need to un-normalize and permute dimensions for display if normalized
+# # Or display directly if ToTensor() was the last step (before normalization)
+# # Since we normalized, let's display the tensor directly (will look weird but shows structure)
+# # To display properly: img_display = img_display * 0.3081 + 0.1307
+# plt.imshow(img_display.squeeze(), cmap="gray")
+# plt.title(f"Sample Image - Label: {label_display}")
+# plt.show()
 
 # |%%--%%| <PsXhzxYQlM|0N68HizUNm> - Cell marker retained, content above replaced custom datasets
 

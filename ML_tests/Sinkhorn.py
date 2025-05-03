@@ -87,12 +87,16 @@ def sinkhorn_primal(r, c, C, epsilon, num_iters=100, tol=1e-9, verbose=False):
     return P, u, v, cost
 
 
+# |%%--%%| <2N8OHWJLTf|7yOljOrKU8>
+
 import numpy as np
+from scipy.special import logsumexp  # Numerically stable log-sum-exp
 
 
-def sinkhorn_primal(r, c, C, epsilon, num_iters=100, tol=1e-9, verbose=False):
+def sinkhorn_dual_log(r, c, C, epsilon, num_iters=100, tol=1e-9, verbose=False):
     """
-    Solves entropy-regularized OT using the Primal Sinkhorn algorithm.
+    Solves entropy-regularized OT using the Dual Sinkhorn algorithm
+    in log-space for numerical stability.
 
     Args:
         r (np.ndarray): Source distribution (m,). Must sum to 1.
@@ -100,15 +104,16 @@ def sinkhorn_primal(r, c, C, epsilon, num_iters=100, tol=1e-9, verbose=False):
         C (np.ndarray): Cost matrix (m, n).
         epsilon (float): Regularization strength.
         num_iters (int): Maximum number of iterations.
-        tol (float): Tolerance for convergence check.
+        tol (float): Tolerance for convergence check based on dual potentials.
         verbose (bool): Print convergence progress.
 
     Returns:
-        tuple: (P, u, v, cost)
+        tuple: (P, f, g, cost, dual_obj)
             P (np.ndarray): Optimal transport plan (m, n).
-            u (np.ndarray): Primal scaling vector (m,).
-            v (np.ndarray): Primal scaling vector (n,).
+            f (np.ndarray): Dual potential vector (m,).
+            g (np.ndarray): Dual potential vector (n,).
             cost (float): Regularized OT cost sum(P * C).
+            dual_obj (float): Value of the dual objective sum(f*r) + sum(g*c).
     """
     m, n = C.shape
     if not np.isclose(r.sum(), 1.0):
@@ -120,45 +125,43 @@ def sinkhorn_primal(r, c, C, epsilon, num_iters=100, tol=1e-9, verbose=False):
     if r.shape[0] != m or c.shape[0] != n:
         raise ValueError("Shape mismatch between r, c, and C.")
 
-    # Add small constant to prevent division by zero if r or c have zeros
-    r_eps = r + 1e-100
-    c_eps = c + 1e-100
+    # Initialize dual potentials
+    f = np.zeros(m)
+    g = np.zeros(n)
 
-    # Initialize scaling vector v
-    v = np.ones(n)
-    u = np.ones(m)  # Will be updated first
-
-    # Calculate Gibbs Kernel K
-    K = np.exp(-C / epsilon)
-    if np.any(K == 0):
-        print("Warning: K contains zeros. May lead to division by zero.")
-        # Add small epsilon where K is zero to prevent immediate failure
-        K[K == 0] = 1e-100
+    # Precompute for efficiency
+    C_eps = -C / epsilon
+    log_r = np.log(r + 1e-100)  # Add epsilon for stability if r has zeros
+    log_c = np.log(c + 1e-100)  # Add epsilon for stability if c has zeros
 
     if verbose:
-        print(f"{'Iter':<5} | {'Change in v':<15}")
-        print("-" * 25)
+        print(f"{'Iter':<5} | {'Change in f':<15} | {'Change in g':<15}")
+        print("-" * 40)
 
     for i in range(num_iters):
-        v_prev = v.copy()
+        f_prev = f.copy()
+        g_prev = g.copy()
 
-        # Update u
-        Kv = K @ v
-        # Add small epsilon to denominator for numerical stability
-        u = r_eps / (Kv + 1e-100)
+        # Update g (using previous f)
+        # logsumexp_arg_g = (f[:, None] - C) / epsilon # Equivalent to below
+        logsumexp_arg_g = f[:, None] / epsilon + C_eps
+        g = -epsilon * logsumexp(logsumexp_arg_g, axis=0) + epsilon * log_c
 
-        # Update v
-        KTu = K.T @ u
-        # Add small epsilon to denominator for numerical stability
-        v = c_eps / (KTu + 1e-100)
+        # Update f (using updated g)
+        # logsumexp_arg_f = (g[None, :] - C) / epsilon # Equivalent to below
+        logsumexp_arg_f = g[None, :] / epsilon + C_eps
+        f = -epsilon * logsumexp(logsumexp_arg_f, axis=1) + epsilon * log_r
 
         # --- Convergence Check ---
-        # Check change in v (or u). More robust checks involve marginal errors.
-        change = np.linalg.norm(v - v_prev)
-        if verbose and (i % 10 == 0 or i == num_iters - 1):
-            print(f"{i:<5} | {change:<15.4e}")
+        # Check change in dual potentials f and g
+        change_f = np.linalg.norm(f - f_prev)
+        change_g = np.linalg.norm(g - g_prev)
+        total_change = change_f + change_g
 
-        if change < tol:
+        if verbose and (i % 10 == 0 or i == num_iters - 1):
+            print(f"{i:<5} | {change_f:<15.4e} | {change_g:<15.4e}")
+
+        if total_change < tol:
             if verbose:
                 print(f"\nConverged after {i+1} iterations.")
             break
@@ -167,16 +170,20 @@ def sinkhorn_primal(r, c, C, epsilon, num_iters=100, tol=1e-9, verbose=False):
             print(f"\nReached max iterations ({num_iters}) without converging.")
 
     # Calculate final transport plan P
-    # P = np.diag(u) @ K @ np.diag(v) # Equivalent but less efficient
-    P = u[:, None] * K * v[None, :]
+    # P = np.exp((f[:, None] + g[None, :] - C) / epsilon) # Equivalent to below
+    log_P = (f[:, None] + g[None, :]) / epsilon + C_eps
+    P = np.exp(log_P)
 
     # Calculate regularized OT cost
     cost = np.sum(P * C)
 
-    return P, u, v, cost
+    # Calculate dual objective value
+    dual_obj = np.sum(f * r) + np.sum(g * c)
+
+    return P, f, g, cost, dual_obj
 
 
-# |%%--%%| <2N8OHWJLTf|bahDMVIFwI>
+# |%%--%%| <7yOljOrKU8|bahDMVIFwI>
 
 # --- Example Data ---
 m = 3
